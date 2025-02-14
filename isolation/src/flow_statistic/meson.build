@@ -1,0 +1,4 @@
+executable(
+    'flow_statistic',
+
+)

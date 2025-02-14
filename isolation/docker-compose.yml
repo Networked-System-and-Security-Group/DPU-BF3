@@ -1,0 +1,7 @@
+services:
+  doca-dev:
+    image: nvcr.io/nvidia/doca/doca:2.9.1-devel
+    container_name: isolation
+    entrypoint: ["tail", "-f", "/dev/null"]
+    volumes:
+      - ./:/root/dev

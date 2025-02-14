@@ -1,0 +1,4 @@
+-I../../common/dev
+-I../../common
+-I/opt/mellanox/flexio/include
+-I/opt/mellanox/doca/lib/aarch64-linux-gnu/dpa_llvm/lib/clang/18/include
