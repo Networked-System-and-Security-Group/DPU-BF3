@@ -1,4 +1,5 @@
 #include "doca_application.hpp"
+#include "doca_dev.h"
 
 #include <doca_argp.h>
 #include <doca_error.h>

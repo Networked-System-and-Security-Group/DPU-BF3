@@ -13,13 +13,13 @@ kv_aggregation_dev_target = custom_target(
 		'--dpacc_build_dir', '@OUTDIR@',
 		'--additional_dpacc_options', dpacc_options,
 		'--external_cc_options', ','.join(dpacc_devicecc_array),
-		'--additional_include_directories', common_dev_include_dir,
-		'--additional_ld_libs', common_dev_name,
-		'--additional_lib_paths', common_dev_lib_path,
+		'--additional_include_directories', common_flexio_dev_include_dir,
+		'--additional_ld_libs', common_flexio_dev_name,
+		'--additional_lib_paths', common_flexio_dev_lib_path,
 	],
 	output: app_out_name,
 	input: app_dev_srcs,
-	depends: [common_dev_target],
+	depends: [common_flexio_dev_target],
 	depend_files: shared_include_files,
 )
 

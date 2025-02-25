@@ -7,7 +7,7 @@ executable(
 		ibverbs_dep,
 		mlx5_dep,
 		flexio_dep,
-		common_host_dep,
+		common_flexio_host_dep,
 		kv_aggregation_device_dep,
 	],
 	link_depends: kv_aggregation_dev_target,

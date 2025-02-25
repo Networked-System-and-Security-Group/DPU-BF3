@@ -1,2 +1,2 @@
-subdir('dev')
-subdir('host')
+subdir('flexio')
+subdir('doca')

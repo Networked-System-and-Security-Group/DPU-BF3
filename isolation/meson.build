@@ -10,6 +10,9 @@ doca_common_dep = dependency('doca-common', required: true)
 doca_argp_dep = dependency('doca-argp', required: true)
 doca_ec_dep = dependency('doca-erasure-coding', required: true)
 doca_flow_dep = dependency('doca-flow', required: true)
+doca_eth_dep = dependency('doca-eth', required: true)
+
+add_project_arguments('-D DOCA_ALLOW_EXPERIMENTAL_API', language: ['c', 'cpp'], native: true)
 
 # Get program for build device side library and applications
 build_dpacc = find_program('doca_build_dpacc.sh', required: true)
@@ -48,8 +51,20 @@ else
 	error('Unsupported build mode ', meson_build_type)
 endif
 
+doca_dir = '/opt/mellanox/doca'
+sample_dir = doca_dir + '/samples'
+ec_dir = sample_dir + '/doca_erasure_coding'
+eth_dir = sample_dir + '/doca_eth'
+
 # List of the samples
-apps = ['src/kv_aggregation', 'src/check_header', 'src/erasure_coding']
+apps = [
+	'src/kv_aggregation',
+	'src/check_header',
+	'src/erasure_coding',
+	'src/flow_statistic',
+	'src/counter',
+	'src/kvs',
+]
 
 # Build common host and device side libraries
 subdir('src/common')

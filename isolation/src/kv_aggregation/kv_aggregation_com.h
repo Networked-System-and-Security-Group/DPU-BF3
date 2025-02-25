@@ -14,7 +14,7 @@
 #include <cstdint>
 #endif
 
-#include "../common/transfer.h"
+#include "../common/flexio/transfer.h"
 
 /* Collateral structure for transfer host data to device */
 struct host2dev_kv_aggregation_data {

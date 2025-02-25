@@ -12,7 +12,6 @@
 
 /* Flex IO SDK host side API header. */
 #include <libflexio/flexio.h>
-
 /* Common header for communication between host and DPA. */
 #include "../check_header_com.h"
 
@@ -89,7 +88,7 @@ int main(int argc, char **argv) {
 
     uint8_t nb_threads = atoi(argv[2]);
     for (uint8_t thread_id = 0; thread_id < nb_threads; thread_id++) {
-        eh_context *ck_hdr_eh_ctx = new eh_context(fp_ctx->process, thread_id);
+        eh_context *ck_hdr_eh_ctx = new eh_context(fp_ctx->process, thread_id + 85);
         if (ck_hdr_eh_ctx->create_event_handler(check_header_event_handler) !=
             FLEXIO_STATUS_SUCCESS) {
             printf("Failed to create event handler for thread %d\n", thread_id);

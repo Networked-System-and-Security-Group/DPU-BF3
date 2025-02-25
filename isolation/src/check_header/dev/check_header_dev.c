@@ -5,7 +5,7 @@
 #include <libflexio-libc/string.h>
 #include <stddef.h>
 /* Shared header file for packet processor sample */
-#include "../../common/transfer.h"
+#include "../../common/flexio/transfer.h"
 #include "../check_header_com.h"
 #include "libflexio-dev/flexio_dev.h"
 

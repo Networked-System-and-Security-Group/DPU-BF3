@@ -1,11 +1,7 @@
-#ifndef __DOCA_APP_H__
-#define __DOCA_APP_H__
+#ifndef __DOCA_APPLICATION_H__
+#define __DOCA_APPLICATION_H__
 
-#ifndef DOCA_ALLOW_EXPERIMENTAL_API
-#define DOCA_ALLOW_EXPERIMENTAL_API
-#endif
-
-#include "doca_argp.h"
+#include <doca_argp.h>
 #include <doca_error.h>
 #include <doca_log.h>
 
