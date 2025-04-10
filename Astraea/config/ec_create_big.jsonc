@@ -1,0 +1,8 @@
+{
+    "doca_program_flags":{
+        "nb_data_blocks": 128,
+        "nb_rdnc_blocks": 32,
+        "block_size": 262144,
+        "nb_tasks": 16
+    }
+  }
