@@ -1,58 +1,26 @@
-#include <bits/types/sigset_t.h>
 #include <chrono>
-#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <unistd.h>
 
 #include <doca_buf.h>
 #include <doca_buf_inventory.h>
+#include <doca_ctx.h>
 #include <doca_dev.h>
+#include <doca_erasure_coding.h>
 #include <doca_error.h>
 #include <doca_log.h>
 #include <doca_mmap.h>
 #include <doca_types.h>
+#include <unistd.h>
 
-#include <doca_ctx.h>
-#include <doca_erasure_coding.h>
-#include <doca_pe.h>
-
+#include "doca_pe.h"
 #include "ec_create.h"
 
 DOCA_LOG_REGISTER(EC_CREATE : CORE);
-
-static void write_to_file(void *data, size_t size, const char *file_name) {
-    namespace fs = std::filesystem;
-
-    // 创建父目录（如果不存在）
-    const fs::path file_path(file_name);
-    fs::create_directories(file_path.parent_path());
-
-    // 以二进制模式打开文件，清空现有内容或创建新文件
-    std::ofstream file(file_name, std::ios::binary | std::ios::trunc);
-
-    // 检查文件流状态
-    if (!file) {
-        throw std::runtime_error("Failed to open file: " +
-                                 std::string(file_name));
-    }
-
-    // 写入二进制数据
-    file.write(reinterpret_cast<const char *>(data),
-               static_cast<std::streamsize>(size));
-
-    // 显式关闭文件（RAII机制会保证关闭，但显式调用更明确）
-    file.close();
-
-    // 验证写入完整性
-    if (file.bad()) {
-        throw std::runtime_error("Failed to write complete data to file");
-    }
-}
 
 /* Tasks will be free in the destructor */
 void ec_create_success_cb(doca_ec_task_create *task, doca_data task_user_data,
@@ -114,18 +82,6 @@ doca_error_t ec_create(const ec_create_config &cfg) {
         return status;
     }
 
-    /* Wait for the signal to submit task */
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGUSR1);
-    sigprocmask(SIG_BLOCK, &mask, nullptr);
-    int sig;
-
-    DOCA_LOG_INFO("Wait for signal SIGUSR1 to continue");
-    sigwait(&mask, &sig);
-
-    auto begin_time = std::chrono::high_resolution_clock::now();
-
     uint32_t nb_finished_tasks = 0;
     for (uint32_t i = 0; i < cfg.nb_tasks; i++) {
         doca_ec_task_create *task;
@@ -138,29 +94,34 @@ doca_error_t ec_create(const ec_create_config &cfg) {
             return status;
         }
 
-        status = doca_task_submit(doca_ec_task_create_as_task(task));
+        rscs.tasks.push_back(task);
+
+        status = doca_task_submit_ex(doca_ec_task_create_as_task(task),
+                                     DOCA_TASK_SUBMIT_FLAG_NONE);
         if (status != DOCA_SUCCESS) {
             DOCA_LOG_ERR("Failed to submit task: %s",
                          doca_error_get_descr(status));
             return status;
         }
-        rscs.tasks.push_back(task);
     }
+
+    auto begin_time = std::chrono::high_resolution_clock::now();
+    doca_ctx_flush_tasks(rscs.ctx);
 
     while (nb_finished_tasks < cfg.nb_tasks)
         (void)doca_pe_progress(rscs.pe);
 
     auto end_time = std::chrono::high_resolution_clock::now();
 
-    double time_cost_in_ms =
+    double time_cost_in_us =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end_time -
                                                              begin_time)
             .count() /
-        (double)1000000;
-    DOCA_LOG_INFO("All tasks finished, taking %fms", time_cost_in_ms);
-    write_to_file(static_cast<uint8_t *>(rscs.mmap_buffer) +
-                      cfg.nb_data_blocks * cfg.block_size,
-                  cfg.nb_rdnc_blocks * cfg.block_size, "./out/doca");
+        (double)1000;
+    DOCA_LOG_INFO("All tasks finished, nb_data_blocks = %u, nb_rdnc_blocks = "
+                  "%u, block_size = %lu, per_task_time = %fus",
+                  cfg.nb_data_blocks, cfg.nb_rdnc_blocks, cfg.block_size,
+                  time_cost_in_us / cfg.nb_tasks);
 
     return DOCA_SUCCESS;
 }

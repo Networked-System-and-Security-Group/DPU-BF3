@@ -1,6 +1,8 @@
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <utility>
 
 #include <doca_buf.h>
 #include <doca_buf_inventory.h>
@@ -8,16 +10,20 @@
 #include <doca_error.h>
 #include <doca_log.h>
 #include <doca_mmap.h>
+#include <doca_pe.h>
 #include <doca_types.h>
-#include <pthread.h>
-#include <utility>
 
 #include "astraea_ctx.h"
 #include "astraea_ec.h"
 #include "astraea_pe.h"
-#include "doca_pe.h"
+#include "resource_mgmt.h"
 
 DOCA_LOG_REGISTER(ASTRAEA : EC);
+
+extern sem_t *ec_deficit_sem;
+extern shared_resources *shm_data;
+extern uint32_t app_id;
+extern sem_t *ec_token_sem;
 
 extern bool has_finished_task;
 
@@ -48,6 +54,21 @@ void subtask_success_cb(doca_ec_task_create *task, doca_data task_user_data,
     }
 
     if (user_data->is_last) {
+        auto cur_time = std::chrono::high_resolution_clock::now();
+        if (cur_time > user_data->origin_task->expected_time) {
+            if (sem_wait(ec_deficit_sem)) {
+                DOCA_LOG_ERR("Failed to get ec_token_sem");
+                return;
+            }
+
+            shm_data->deficits[app_id]++;
+
+            if (sem_post(ec_deficit_sem)) {
+                DOCA_LOG_ERR("Failed to post ec_token_sem");
+                return;
+            }
+        }
+
         user_data->origin_task->ec->success_cb(
             user_data->origin_task, user_data->origin_task->user_data,
             {.u64 = 0});
@@ -150,13 +171,44 @@ doca_error_t astraea_ec_create(doca_dev *dev, astraea_ec **ec) {
         return status;
     }
 
+    new_ec->cur_task_pos = 0;
+    for (uint32_t i = 0; i < MAX_NB_INFLIGHT_EC_TASKS; i++) {
+        new_ec->task_pool[i] = new astraea_ec_task_create;
+        new_ec->task_pool[i]->cur_subtask_pos = 0;
+        new_ec->task_pool[i]->is_free = false;
+        for (uint32_t j = 0; j < MAX_NB_SUBTASKS_PER_TASK; j++) {
+            new_ec->task_pool[i]->subtask_pool[j] =
+                new _astraea_ec_subtask_create;
+            new_ec->task_pool[i]->subtask_pool[j]->user_data =
+                new _astraea_ec_subtask_create_user_data;
+            new_ec->task_pool[i]->subtask_pool[j]->task = nullptr;
+        }
+    }
+
     *ec = new_ec;
 
     return DOCA_SUCCESS;
 }
 
 doca_error_t astraea_ec_destroy(astraea_ec *ec) {
-    doca_error_t status = doca_ec_destroy(ec->ec);
+    for (uint32_t i = 0; i < MAX_NB_INFLIGHT_EC_TASKS; i++) {
+        astraea_ec_task_create *task = ec->task_pool[i];
+        for (uint32_t j = 0; j < MAX_NB_SUBTASKS_PER_TASK; j++) {
+            _astraea_ec_subtask_create *subtask = task->subtask_pool[j];
+            /* DOCA tasks are free in astraea_ctx_stop */
+            delete subtask->user_data;
+            delete subtask;
+        }
+        for (std::pair<doca_buf *, doca_buf *> sub_buf_pair :
+             task->sub_buf_pairs) {
+            doca_buf_dec_refcount(sub_buf_pair.first, nullptr);
+            doca_buf_dec_refcount(sub_buf_pair.second, nullptr);
+        }
+
+        delete task;
+    }
+    doca_error_t status;
+    status = doca_ec_destroy(ec->ec);
     status = doca_buf_inventory_destroy(ec->buf_inventory);
     status = doca_mmap_destroy(ec->dst_mmap);
     free(ec->tmp_rdnc_buffer);
@@ -189,8 +241,22 @@ doca_error_t astraea_ec_task_create_set_conf(
     (void)num_tasks;
     ec->success_cb = successful_task_completion_cb;
     ec->error_cb = error_task_completion_cb;
-    return doca_ec_task_create_set_conf(ec->ec, subtask_success_cb,
-                                        subtask_error_cb, 8192);
+    return doca_ec_task_create_set_conf(
+        ec->ec, subtask_success_cb, subtask_error_cb, MAX_NB_INFLIGHT_EC_TASKS);
+}
+
+static inline uint32_t calc_token_cost(uint32_t nb_data_blocks,
+                                       uint32_t nb_rdnc_blocks,
+                                       size_t block_size) {
+    if (nb_data_blocks == 128 && nb_rdnc_blocks == 32 && block_size == 1024) {
+        return 1;
+    }
+
+    if (nb_data_blocks == 128 && nb_rdnc_blocks == 32 &&
+        block_size == 1024 * 1024) {
+        return 1024;
+    }
+    return 1;
 }
 
 /**
@@ -198,7 +264,43 @@ doca_error_t astraea_ec_task_create_set_conf(
  * The granularity should be calculated according to real time metadata
  * Which must incurs semaphore operations
  */
-static size_t calc_granularity() { return 1024; }
+static size_t calc_granularity(astraea_ec_task_create *task) {
+    size_t granularity = 0;
+
+    uint32_t token_cost =
+        calc_token_cost(task->matrix->nb_data_blocks,
+                        task->matrix->nb_rdnc_blocks, task->origin_block_size);
+
+    if (sem_wait(ec_token_sem)) {
+        DOCA_LOG_ERR("Failed to get ec_token_sem");
+        return 1024;
+    }
+
+    const uint32_t nb_avail_tokens = shm_data->ec_tokens[app_id];
+
+    if (token_cost < nb_avail_tokens) {
+        granularity = task->origin_block_size;
+    } else {
+        granularity = nb_avail_tokens < 2      ? 1 * 1024
+                      : nb_avail_tokens < 4    ? 2 * 1024
+                      : nb_avail_tokens < 8    ? 4 * 1024
+                      : nb_avail_tokens < 16   ? 8 * 1024
+                      : nb_avail_tokens < 32   ? 16 * 1024
+                      : nb_avail_tokens < 64   ? 32 * 1024
+                      : nb_avail_tokens < 128  ? 64 * 1024
+                      : nb_avail_tokens < 256  ? 128 * 1024
+                      : nb_avail_tokens < 512  ? 256 * 1024
+                      : nb_avail_tokens < 1024 ? 512 * 1024
+                                               : 1024 * 1024;
+    }
+
+    if (sem_post(ec_token_sem)) {
+        DOCA_LOG_ERR("Failed to post ec_token_sem");
+        return 1024;
+    }
+
+    return granularity;
+}
 
 /* Only use to reduce function parameter */
 struct subtask_create_ctx {
@@ -214,10 +316,9 @@ static inline doca_error_t
 create_subtask(const subtask_create_ctx &stsk_ctx,
                _astraea_ec_subtask_create **subtask) {
     *subtask = nullptr;
-    _astraea_ec_subtask_create *new_subtask = new _astraea_ec_subtask_create;
-
-    /* Set user data that will be pass to the real doca_task */
-    new_subtask->user_data = new _astraea_ec_subtask_create_user_data;
+    _astraea_ec_subtask_create *new_subtask =
+        stsk_ctx.origin_task
+            ->subtask_pool[stsk_ctx.origin_task->cur_subtask_pos++];
 
     new_subtask->user_data->is_sub = stsk_ctx.is_sub;
     new_subtask->user_data->is_last = stsk_ctx.is_last;
@@ -231,8 +332,6 @@ create_subtask(const subtask_create_ctx &stsk_ctx,
     if (status != DOCA_SUCCESS) {
         DOCA_LOG_ERR("Failed to allocate and init ec create task: %s",
                      doca_error_get_descr(status));
-        delete new_subtask->user_data;
-        delete new_subtask;
         return status;
     }
 
@@ -245,7 +344,7 @@ doca_error_t astraea_ec_task_create_allocate_init(
     doca_buf *original_data_blocks, doca_buf *rdnc_blocks, doca_data user_data,
     astraea_ec_task_create **task) {
     *task = nullptr;
-    astraea_ec_task_create *new_task = new astraea_ec_task_create;
+    astraea_ec_task_create *new_task = ec->task_pool[ec->cur_task_pos++];
 
     size_t src_buf_size;
     doca_error_t status =
@@ -253,22 +352,22 @@ doca_error_t astraea_ec_task_create_allocate_init(
     if (status != DOCA_SUCCESS) {
         DOCA_LOG_ERR("Failed to get block size: %s",
                      doca_error_get_descr(status));
-        delete new_task;
         return status;
     }
 
     const size_t origin_block_size =
         src_buf_size / coding_matrix->nb_data_blocks;
-    const size_t sub_block_size = calc_granularity();
 
-    new_task->sub_block_size = sub_block_size;
     new_task->origin_block_size = origin_block_size;
-
     new_task->user_data = user_data;
     new_task->original_data_blocks = original_data_blocks;
     new_task->rdnc_blocks = rdnc_blocks;
     new_task->ec = ec;
     new_task->matrix = coding_matrix;
+
+    const size_t sub_block_size = calc_granularity(new_task);
+
+    new_task->sub_block_size = sub_block_size;
 
     if (origin_block_size > sub_block_size) {
         void *dst_base_addr = nullptr;
@@ -276,7 +375,6 @@ doca_error_t astraea_ec_task_create_allocate_init(
         if (status != DOCA_SUCCESS) {
             DOCA_LOG_ERR("Failed to get rdnc buf addr: %s",
                          doca_error_get_descr(status));
-            delete new_task;
             return status;
         }
 
@@ -287,7 +385,6 @@ doca_error_t astraea_ec_task_create_allocate_init(
         if (status != DOCA_SUCCESS) {
             DOCA_LOG_ERR("Failed to get data buf addr: %s",
                          doca_error_get_descr(status));
-            delete new_task;
             return status;
         }
 
@@ -352,7 +449,6 @@ doca_error_t astraea_ec_task_create_allocate_init(
             status = create_subtask(stsk_ctx, &subtask);
             if (status != DOCA_SUCCESS) {
                 DOCA_LOG_ERR("Failed to create sub task");
-                delete new_task;
                 return status;
             }
             new_task->subtasks.push_back(subtask);
@@ -371,7 +467,6 @@ doca_error_t astraea_ec_task_create_allocate_init(
         status = create_subtask(stsk_ctx, &subtask);
         if (status != DOCA_SUCCESS) {
             DOCA_LOG_ERR("Failed to create sub task");
-            delete new_task;
             return status;
         }
 

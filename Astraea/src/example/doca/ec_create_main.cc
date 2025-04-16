@@ -99,6 +99,16 @@ doca_error_t register_ec_create_params() {
         return status;
     }
 
+    status = register_param(
+        "lat", "latency", "latency sla",
+        [](void *param, void *config) -> doca_error_t { return DOCA_SUCCESS; },
+        DOCA_ARGP_TYPE_INT);
+    if (status != DOCA_SUCCESS) {
+        DOCA_LOG_ERR("Failed to register latency param: %s",
+                     doca_error_get_descr(status));
+        return status;
+    }
+
     return DOCA_SUCCESS;
 }
 

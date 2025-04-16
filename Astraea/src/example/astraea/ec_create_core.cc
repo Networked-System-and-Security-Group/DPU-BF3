@@ -148,9 +148,6 @@ doca_error_t ec_create(const ec_create_config &cfg) {
         rscs.tasks.push_back(task);
     }
 
-    // for (astraea_ec_task_create *task : rscs.tasks) {
-    // }
-
     while (nb_finished_tasks < cfg.nb_tasks)
         (void)astraea_pe_progress(rscs.pe);
 

@@ -29,23 +29,6 @@ ec_create_resources::~ec_create_resources() {
     for (doca_ec_task_create *task : tasks)
         doca_task_free(doca_ec_task_create_as_task(task));
 
-    /* Destroy ec related resources */
-    if (ctx) {
-        doca_error_t status = doca_ctx_stop(ctx);
-        /**
-         * Make sure to finish the last inflight task
-         * before destroy ec and pe
-         */
-        while (status == DOCA_ERROR_IN_PROGRESS) {
-            (void)doca_pe_progress(pe);
-            status = doca_ctx_stop(ctx);
-        }
-    }
-    if (matrix)
-        doca_ec_matrix_destroy(matrix);
-    if (ec)
-        doca_ec_destroy(ec);
-
     /* Destroy bufs, inventory and mmap */
     for (doca_buf *dst_buf : dst_bufs)
         doca_buf_dec_refcount(dst_buf, nullptr);
@@ -57,6 +40,24 @@ ec_create_resources::~ec_create_resources() {
         doca_mmap_destroy(mmap);
     if (mmap_buffer)
         free(mmap_buffer);
+
+    /* Destroy ec related resources */
+    if (ctx) {
+        doca_error_t status = doca_ctx_stop(ctx);
+        /**
+         * Make sure to finish the last inflight task
+         * before destroy ec and pe
+         */
+        while (status == DOCA_ERROR_IN_PROGRESS) {
+            while (doca_pe_progress(pe) == 0)
+                ;
+            status = doca_ctx_stop(ctx);
+        }
+    }
+    if (matrix)
+        doca_ec_matrix_destroy(matrix);
+    if (ec)
+        doca_ec_destroy(ec);
 
     /* Destroy pe */
     if (pe)

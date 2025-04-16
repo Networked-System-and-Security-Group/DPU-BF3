@@ -100,18 +100,26 @@ doca_error_t register_ec_create_params() {
         return status;
     }
 
+    status = register_param(
+        "lat", "latency", "latency sla",
+        [](void *param, void *config) -> doca_error_t {
+            ec_create_config *cfg = static_cast<ec_create_config *>(config);
+            uint32_t latency = *static_cast<uint32_t *>(param);
+            cfg->latency = latency;
+            return DOCA_SUCCESS;
+        },
+        DOCA_ARGP_TYPE_INT);
+    if (status != DOCA_SUCCESS) {
+        DOCA_LOG_ERR("Failed to register latency param: %s",
+                     doca_error_get_descr(status));
+        return status;
+    }
+
     return DOCA_SUCCESS;
 }
 
 int main(int argc, char **argv) {
     doca_error_t status;
-
-    /* Use the RAII app register object */
-    astraea_authenticator authenticator{&status};
-    if (status != DOCA_SUCCESS) {
-        DOCA_LOG_ERR("Failed to register app");
-        return EXIT_FAILURE;
-    }
 
     /* Setup SDK logger */
     doca_log_backend *sdk_log;
@@ -140,7 +148,8 @@ int main(int argc, char **argv) {
     ec_create_config cfg = {.nb_data_blocks = 128,
                             .nb_rdnc_blocks = 32,
                             .block_size = 1024,
-                            .nb_tasks = 1};
+                            .nb_tasks = 1,
+                            .latency = 20};
 
     status = doca_argp_init("ec_create", &cfg);
     if (status != DOCA_SUCCESS) {
@@ -160,6 +169,13 @@ int main(int argc, char **argv) {
         DOCA_LOG_ERR("Failed to parse parameters: %s",
                      doca_error_get_descr(status));
         doca_argp_destroy();
+        return EXIT_FAILURE;
+    }
+
+    /* Use the RAII app register object */
+    astraea_authenticator authenticator{cfg.latency, &status};
+    if (status != DOCA_SUCCESS) {
+        DOCA_LOG_ERR("Failed to register app");
         return EXIT_FAILURE;
     }
 

@@ -16,6 +16,8 @@
 #include <doca_mmap.h>
 #include <doca_types.h>
 
+constexpr uint32_t MAX_NB_SUBTASKS_PER_TASK = 1024;
+constexpr uint32_t MAX_NB_INFLIGHT_EC_TASKS = 8192;
 constexpr uint32_t MAX_NB_CTX_BUFS = 1024 * 1024;
 constexpr size_t TMP_RDNC_BUFFER_SIZE = 32 * 1024 * 1024 * 32;
 constexpr uint32_t MAX_NB_DATA_BLOCKS = 128;
@@ -58,6 +60,8 @@ struct astraea_ec_task_create {
     /* Resources managed by task itself */
     std::vector<_astraea_ec_subtask_create *> subtasks;
     std::vector<std::pair<doca_buf *, doca_buf *>> sub_buf_pairs;
+    _astraea_ec_subtask_create *subtask_pool[MAX_NB_SUBTASKS_PER_TASK];
+    uint32_t cur_subtask_pos;
 
     /* Metadatas that we only want to set once */
     size_t origin_block_size;
@@ -70,6 +74,8 @@ struct astraea_ec_task_create {
     doca_buf *rdnc_blocks;
     astraea_ec *ec;
     astraea_ec_matrix *matrix;
+    std::chrono::high_resolution_clock::time_point expected_time;
+    bool is_free;
 };
 
 struct astraea_ec {
@@ -83,6 +89,9 @@ struct astraea_ec {
     void *tmp_rdnc_buffer;
     doca_mmap *dst_mmap;
     doca_buf_inventory *buf_inventory;
+
+    astraea_ec_task_create *task_pool[MAX_NB_INFLIGHT_EC_TASKS];
+    uint32_t cur_task_pos;
 };
 
 doca_error_t astraea_ec_create(doca_dev *dev, astraea_ec **ec);

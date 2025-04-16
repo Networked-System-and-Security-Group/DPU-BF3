@@ -1,0 +1,1 @@
+taskset -c 4 ./build/src/scheduler/astraea_scheduler

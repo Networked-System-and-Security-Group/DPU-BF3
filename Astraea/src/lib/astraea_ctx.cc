@@ -35,14 +35,11 @@ static void worker(std::stop_token stoken, astraea_ctx *ctx) {
                 ctx->ec->ec_create_tasks_lock};
             std::lock_guard<std::mutex> ctx_guard{ctx->ctx_lock};
 
-            bool will_submit_tasks = shm_data->ec_tokens[app_id] > 0 &&
-                                     !ctx->ec->ec_create_tasks.empty();
             while (shm_data->ec_tokens[app_id] > 0 &&
                    !ctx->ec->ec_create_tasks.empty()) {
                 doca_error_t status =
-                    doca_task_submit_ex(doca_ec_task_create_as_task(
-                                            ctx->ec->ec_create_tasks.front()),
-                                        DOCA_TASK_SUBMIT_FLAG_NONE);
+                    doca_task_submit(doca_ec_task_create_as_task(
+                        ctx->ec->ec_create_tasks.front()));
                 if (status == DOCA_SUCCESS) {
                     ctx->ec->ec_create_tasks.pop();
                     shm_data->ec_tokens[app_id]--;
@@ -51,8 +48,6 @@ static void worker(std::stop_token stoken, astraea_ctx *ctx) {
                                  doca_error_get_descr(status));
                 }
             }
-            if (will_submit_tasks)
-                doca_ctx_flush_tasks(ctx->ctx);
 
             if (sem_post(ec_token_sem)) {
                 DOCA_LOG_ERR("Failed to post ec_token_sem");
@@ -83,6 +78,19 @@ doca_error_t astraea_ctx_stop(astraea_ctx *ctx) {
         delete ctx->submitter;
         ctx->submitter = nullptr;
     }
+
+    if (ctx->type == EC) {
+        for (uint32_t i = 0; i < MAX_NB_INFLIGHT_EC_TASKS; i++) {
+            astraea_ec_task_create *task = ctx->ec->task_pool[i];
+            for (uint32_t j = 0; j < MAX_NB_SUBTASKS_PER_TASK; j++) {
+                _astraea_ec_subtask_create *subtask = task->subtask_pool[j];
+                if (subtask->task) {
+                    doca_task_free(doca_ec_task_create_as_task(subtask->task));
+                }
+            }
+        }
+    }
+
     /* Astraea will release astraea_ctx's memory in astraea_pe_progress */
     return doca_ctx_stop(ctx->ctx);
 }

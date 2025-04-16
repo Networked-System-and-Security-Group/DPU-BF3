@@ -51,7 +51,7 @@ constexpr size_t SHM_SIZE = sizeof(shared_resources);
  */
 class astraea_authenticator {
   public:
-    astraea_authenticator(doca_error_t *status);
+    astraea_authenticator(uint32_t latency, doca_error_t *status);
     ~astraea_authenticator();
 };
 

@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <semaphore.h>
@@ -12,8 +13,18 @@
 #include "astraea_pe.h"
 
 #include "doca_buf.h"
+#include "doca_log.h"
 #include "doca_mmap.h"
 #include "resource_mgmt.h"
+
+DOCA_LOG_REGISTER(ASTRAEA : PE);
+
+extern sem_t *metadata_sem;
+extern shared_resources *shm_data;
+extern uint32_t app_id;
+extern std::chrono::microseconds latency_sla;
+
+auto last_expect_time = std::chrono::high_resolution_clock::now();
 
 bool has_finished_task = false;
 
@@ -60,6 +71,14 @@ doca_error_t astraea_task_submit(astraea_task *task) {
     if (task->type == EC_CREATE) {
         std::lock_guard<std::mutex> guard{
             task->ec_task_create->ec->ec_create_tasks_lock};
+
+        auto cur_time = std::chrono::high_resolution_clock::now();
+
+        last_expect_time =
+            latency_sla +
+            (last_expect_time > cur_time ? last_expect_time : cur_time);
+        task->ec_task_create->expected_time = last_expect_time;
+
         for (_astraea_ec_subtask_create *subtask :
              task->ec_task_create->subtasks) {
             task->ec_task_create->ec->ec_create_tasks.push(subtask->task);
@@ -68,24 +87,7 @@ doca_error_t astraea_task_submit(astraea_task *task) {
     return DOCA_SUCCESS;
 }
 
-void astraea_task_free(astraea_task *task) {
-    if (task->type == EC_CREATE) {
-        for (_astraea_ec_subtask_create *subtask :
-             task->ec_task_create->subtasks) {
-            doca_task_free(doca_ec_task_create_as_task(subtask->task));
-            delete subtask->user_data;
-            delete subtask;
-        }
-        for (std::pair<doca_buf *, doca_buf *> sub_buf_pair :
-             task->ec_task_create->sub_buf_pairs) {
-            doca_buf_dec_refcount(sub_buf_pair.first, nullptr);
-            doca_buf_dec_refcount(sub_buf_pair.second, nullptr);
-        }
-
-        delete task->ec_task_create;
-    }
-    delete task;
-}
+void astraea_task_free(astraea_task *task) { delete task; }
 
 doca_error_t astraea_pe_connect_ctx(astraea_pe *pe, astraea_ctx *ctx) {
     std::lock_guard<std::mutex> guard{ctx->ctx_lock};

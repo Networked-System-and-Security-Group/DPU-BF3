@@ -9,5 +9,6 @@ add_project_arguments('-D DOCA_ALLOW_EXPERIMENTAL_API', language: 'cpp')
 # lib should be built before building sample to avoid undefined dependency error
 subdir('src/lib')
 
-subdir('src/example')
+subdir('src/profiling')
 subdir('src/scheduler')
+subdir('src/example')

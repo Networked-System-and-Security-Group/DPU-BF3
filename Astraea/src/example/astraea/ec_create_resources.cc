@@ -30,18 +30,6 @@ ec_create_resources::~ec_create_resources() {
     for (astraea_ec_task_create *task : tasks)
         astraea_task_free(astraea_ec_task_create_as_task(task));
 
-    /* Destroy bufs, inventory and mmap */
-    for (doca_buf *dst_buf : dst_bufs)
-        doca_buf_dec_refcount(dst_buf, nullptr);
-    if (src_buf)
-        doca_buf_dec_refcount(src_buf, nullptr);
-    if (buf_inventory)
-        doca_buf_inventory_destroy(buf_inventory);
-    if (mmap)
-        doca_mmap_destroy(mmap);
-    if (mmap_buffer)
-        free(mmap_buffer);
-
     /* Destroy ec related resources */
     if (ctx) {
         doca_error_t status = astraea_ctx_stop(ctx);
@@ -58,6 +46,18 @@ ec_create_resources::~ec_create_resources() {
         astraea_ec_matrix_destroy(matrix);
     if (ec)
         astraea_ec_destroy(ec);
+
+    /* Destroy bufs, inventory and mmap */
+    for (doca_buf *dst_buf : dst_bufs)
+        doca_buf_dec_refcount(dst_buf, nullptr);
+    if (src_buf)
+        doca_buf_dec_refcount(src_buf, nullptr);
+    if (buf_inventory)
+        doca_buf_inventory_destroy(buf_inventory);
+    if (mmap)
+        doca_mmap_destroy(mmap);
+    if (mmap_buffer)
+        free(mmap_buffer);
 
     /* Destroy pe */
     if (pe)

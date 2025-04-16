@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <fcntl.h>
 #include <semaphore.h>
@@ -14,15 +15,19 @@ DOCA_LOG_REGISTER(RESOURCE_MGMT);
 /* Per app global variables */
 sem_t *metadata_sem = nullptr;
 sem_t *ec_token_sem = nullptr;
+sem_t *ec_deficit_sem = nullptr;
 int shm_fd = -1;
 shared_resources *shm_data = nullptr;
 uint32_t app_id = -1;
+std::chrono::microseconds latency_sla;
 
 /**
  * This function not only register this app in shared memory
- * But also set output parameters for the app to use
+ * But also set output parameters for the app to check status
  */
-astraea_authenticator::astraea_authenticator(doca_error_t *status) {
+astraea_authenticator::astraea_authenticator(uint32_t latency,
+                                             doca_error_t *status) {
+    latency_sla = std::chrono::microseconds(latency);
     *status = DOCA_SUCCESS;
 
     pid_t pid = getpid();
@@ -58,6 +63,14 @@ astraea_authenticator::astraea_authenticator(doca_error_t *status) {
     ec_token_sem = sem_open(EC_TOKEN_SEM_NAMES[shm_data->nb_apps], 0);
     if (ec_token_sem == SEM_FAILED) {
         DOCA_LOG_ERR("Failed to open corresbonding token sem");
+        sem_post(metadata_sem);
+        *status = DOCA_ERROR_IO_FAILED;
+        return;
+    }
+
+    ec_deficit_sem = sem_open(EC_DEFICIT_SEM_NAMES[shm_data->nb_apps], 0);
+    if (ec_deficit_sem == SEM_FAILED) {
+        DOCA_LOG_ERR("Failed to open corresbonding deficit sem");
         sem_post(metadata_sem);
         *status = DOCA_ERROR_IO_FAILED;
         return;
